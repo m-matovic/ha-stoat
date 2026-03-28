@@ -1,0 +1,49 @@
+[database]
+mongodb = "mongodb://{% for host in groups['nodes'] %}{{ hostvars[host]['private_ip'] }}:27017{{ ',' if not loop.last else '' }}{% endfor %}/?replicaSet=rs0"
+redis = "redis://{{ private_ip }}:6379/"
+
+[rabbit]
+host = "{{ private_ip }}"
+port = 5672
+username = "{{ rabbitmq_user }}"
+password = "{{ rabbitmq_password }}"
+
+[hosts]
+app = "https://{{ stoat_domain }}"
+api = "https://{{ stoat_domain }}/api"
+events = "wss://{{ stoat_domain }}/ws"
+autumn = "https://{{ stoat_domain }}/autumn"
+january = "https://{{ stoat_domain }}/january"
+
+[hosts.livekit]
+worldwide = "wss://{{ stoat_domain }}/livekit"
+
+[api]
+
+[api.livekit]
+
+[api.livekit.nodes.worldwide]
+url = "http://{{ private_ip }}:7880"
+lat = 0.0
+lon = 0.0
+key = "{{ livekit_api_key }}"
+secret = "{{ livekit_api_secret }}"
+
+[files]
+encryption_key = "{{ files_encryption_key }}"
+
+[files.s3]
+endpoint = "http://{{ private_ip }}:3900"
+region = "garage"
+access_key_id = "{{ s3_access_key_id }}"
+secret_access_key = "{{ s3_secret_access_key }}"
+default_bucket = "revolt-uploads"
+force_path_style = true
+
+[features.limits.new_user]
+video_resolution = [3996, 2160]
+video_aspect_ratio = [0.3, 10]
+
+[features.limits.default]
+video_resolution = [3996, 2160]
+video_aspect_ratio = [0.3, 10]

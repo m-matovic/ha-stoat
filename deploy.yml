@@ -1,0 +1,296 @@
+---
+- name: Deploy HA Stoat
+  hosts: nodes
+  become: yes
+  vars:
+    deploy_dir: /home/{{ app_user }}/ha-stoat
+
+  tasks:
+    - name: Update apt cache
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+
+    - name: Ensure dependencies are installed
+      apt:
+        name:
+          - apt-transport-https
+          - ca-certificates
+          - curl
+          - software-properties-common
+        state: present
+
+    - name: Install Docker and Docker Compose
+      apt:
+        name:
+          - docker.io
+          - docker-compose-v2
+        state: present
+
+    - name: Ensure Docker is running
+      systemd:
+        name: docker
+        state: started
+        enabled: yes
+
+    - name: Ensure the application user exists
+      user:
+        name: "{{ app_user }}"
+        state: present
+        shell: /bin/bash
+        groups: docker
+        append: yes
+        create_home: yes
+
+    - name: Reset ssh connection to apply docker group
+      meta: reset_connection
+
+    - name: Create deployment directory
+      file:
+        path: "{{ deploy_dir }}"
+        state: directory
+        mode: '0755'
+        owner: "{{ app_user }}"
+        group: "{{ app_user }}"
+
+    - name: Copy static files
+      copy:
+        src: "{{ item.src }}"
+        dest: "{{ deploy_dir }}/{{ item.dest }}"
+        mode: "{{ item.mode }}"
+        owner: "{{ app_user }}"
+        group: "{{ app_user }}"
+      loop:
+        - { src: 'files/keepalived.Dockerfile', dest: 'keepalived.Dockerfile', mode: '0644' }
+        - { src: 'files/caddy.Dockerfile', dest: 'caddy.Dockerfile', mode: '0644' }
+        - { src: 'files/notify.sh', dest: 'notify.sh', mode: '0755' }
+
+    - name: Template configuration files
+      template:
+        src: "templates/{{ item.src }}"
+        dest: "{{ deploy_dir }}/{{ item.dest }}"
+        mode: '0644'
+        owner: "{{ app_user }}"
+        group: "{{ app_user }}"
+      loop:
+        - { src: 'docker-compose.yml.j2', dest: 'docker-compose.yml' }
+        - { src: 'keepalived.conf.j2', dest: 'keepalived.conf' }
+        - { src: 'keydb.conf.j2', dest: 'keydb.conf' }
+        - { src: 'garage.toml.j2', dest: 'garage.toml' }
+        - { src: 'livekit.yaml.j2', dest: 'livekit.yaml' }
+        - { src: 'Caddyfile.j2', dest: 'Caddyfile' }
+        - { src: 'Revolt.toml.j2', dest: 'Revolt.toml' }
+
+    - name: Create .env file for Docker Compose
+      copy:
+        dest: "{{ deploy_dir }}/.env"
+        mode: '0600'
+        owner: "{{ app_user }}"
+        group: "{{ app_user }}"
+        content: |
+          HETZNER_API_TOKEN={{ hetzner_api_token }}
+          FLOATING_IP_ID={{ floating_ip_id }}
+          SERVER_ID={{ server_id }}
+          FLOATING_IP={{ floating_ip }}
+          INTERFACE={{ public_interface }}
+          PRIVATE_IP={{ private_ip }}
+          RABBITMQ_ERLANG_COOKIE={{ rabbitmq_erlang_cookie }}
+          RABBITMQ_USER={{ rabbitmq_user }}
+          RABBITMQ_PASSWORD={{ rabbitmq_password }}
+          GARAGE_RPC_SECRET={{ garage_rpc_secret }}
+          S3_ACCESS_KEY_ID={{ s3_access_key_id }}
+          S3_SECRET_ACCESS_KEY={{ s3_secret_access_key }}
+          LIVEKIT_API_KEY={{ livekit_api_key }}
+          LIVEKIT_API_SECRET={{ livekit_api_secret }}
+          STOAT_DOMAIN={{ stoat_domain }}
+
+    - name: Copy Pushd HA image tarball
+      copy:
+        src: ha-stoatchat-pushd.tar
+        dest: /tmp/ha-stoatchat-pushd.tar
+      ignore_errors: yes
+
+    - name: Load Pushd HA image
+      become_user: "{{ app_user }}"
+      command: docker load -i /tmp/ha-stoatchat-pushd.tar
+      ignore_errors: yes
+
+    - name: Run Docker Compose on Node 1 (Master)
+      become_user: "{{ app_user }}"
+      command: docker compose up -d --build
+      args:
+        chdir: "{{ deploy_dir }}"
+      when: inventory_hostname == groups['nodes'][0]
+      register: compose_output_master
+      changed_when: "'Created' in compose_output_master.stdout or 'Started' in compose_output_master.stdout"
+
+    - name: Run Docker Compose on Secondary Nodes (Without Caddy)
+      become_user: "{{ app_user }}"
+      command: docker compose up -d --build --scale caddy=0
+      args:
+        chdir: "{{ deploy_dir }}"
+      when: inventory_hostname != groups['nodes'][0]
+      register: compose_output_secondary
+      changed_when: "'Created' in compose_output_secondary.stdout or 'Started' in compose_output_secondary.stdout"
+
+    - name: Wait for MongoDB to start
+      wait_for:
+        host: "{{ private_ip }}"
+        port: 27017
+        delay: 5
+        timeout: 60
+
+    - name: Initialize MongoDB Replica Set (Run once on Node 1)
+      become_user: "{{ app_user }}"
+      command: >
+        docker compose exec -T mongodb mongosh --eval 
+        'rs.initiate({
+          _id: "rs0",
+          members: [
+            {% for host in groups['nodes'] %}
+            { _id: {{ loop.index0 }}, host: "{{ hostvars[host]['private_ip'] }}:27017" }{{ "," if not loop.last else "" }}
+            {% endfor %}
+          ]
+        })'
+      args:
+        chdir: "{{ deploy_dir }}"
+      run_once: true
+      delegate_to: "{{ groups['nodes'][0] }}"
+      ignore_errors: yes
+
+    - name: Wait for RabbitMQ to start
+      wait_for:
+        host: "{{ private_ip }}"
+        port: 5672
+        delay: 5
+        timeout: 60
+
+    - name: Stop RabbitMQ App on secondary nodes
+      become_user: "{{ app_user }}"
+      command: docker compose exec -T rabbitmq rabbitmqctl stop_app
+      args:
+        chdir: "{{ deploy_dir }}"
+      when: inventory_hostname != groups['nodes'][0]
+
+    - name: Join RabbitMQ Cluster
+      become_user: "{{ app_user }}"
+      command: docker compose exec -T rabbitmq rabbitmqctl join_cluster rabbit@{{ groups['nodes'][0] }}
+      args:
+        chdir: "{{ deploy_dir }}"
+      when: inventory_hostname != groups['nodes'][0]
+      ignore_errors: yes # Ignore if already in cluster
+
+    - name: Start RabbitMQ App on secondary nodes
+      become_user: "{{ app_user }}"
+      command: docker compose exec -T rabbitmq rabbitmqctl start_app
+      args:
+        chdir: "{{ deploy_dir }}"
+      when: inventory_hostname != groups['nodes'][0]
+
+    - name: Wait for Garage to start
+      wait_for:
+        host: "{{ private_ip }}"
+        port: 3901
+        delay: 5
+        timeout: 60
+
+    - name: Get Garage node ID
+      become_user: "{{ app_user }}"
+      command: docker compose exec -T garage /garage node id -q
+      args:
+        chdir: "{{ deploy_dir }}"
+      register: garage_node_id_cmd
+      changed_when: false
+
+    - name: Set Garage node ID fact
+      set_fact:
+        garage_node_id: "{{ garage_node_id_cmd.stdout | regex_search('([a-f0-9]{64})') }}"
+
+    - name: Connect Garage nodes
+      become_user: "{{ app_user }}"
+      command: docker compose exec -T garage /garage node connect {{ hostvars[item]['garage_node_id'] }}@{{ hostvars[item]['private_ip'] }}:3901
+      args:
+        chdir: "{{ deploy_dir }}"
+      loop: "{{ groups['nodes'] }}"
+      when: 
+        - inventory_hostname == groups['nodes'][0]
+        - item != inventory_hostname
+      ignore_errors: yes
+
+    - name: Assign Garage layout
+      become_user: "{{ app_user }}"
+      command: docker compose exec -T garage /garage layout assign -z dc1 -c 10G {{ hostvars[item]['garage_node_id'] }}
+      args:
+        chdir: "{{ deploy_dir }}"
+      loop: "{{ groups['nodes'] }}"
+      run_once: true
+      delegate_to: "{{ groups['nodes'][0] }}"
+      ignore_errors: yes
+
+    - name: Apply Garage layout
+      become_user: "{{ app_user }}"
+      command: docker compose exec -T garage /garage layout apply --version 1
+      args:
+        chdir: "{{ deploy_dir }}"
+      run_once: true
+      delegate_to: "{{ groups['nodes'][0] }}"
+      ignore_errors: yes
+
+    - name: Create S3 bucket
+      become_user: "{{ app_user }}"
+      command: docker compose exec -T garage /garage bucket create revolt-uploads
+      args:
+        chdir: "{{ deploy_dir }}"
+      run_once: true
+      delegate_to: "{{ groups['nodes'][0] }}"
+      ignore_errors: yes
+
+    - name: Check if S3 key exists
+      become_user: "{{ app_user }}"
+      command: docker compose exec -T garage /garage key info revolt-app
+      args:
+        chdir: "{{ deploy_dir }}"
+      run_once: true
+      delegate_to: "{{ groups['nodes'][0] }}"
+      register: garage_key_info
+      ignore_errors: yes
+      changed_when: false
+
+    - name: Create S3 key
+      become_user: "{{ app_user }}"
+      command: docker compose exec -T garage /garage key import --yes -n revolt-app {{ s3_access_key_id }} {{ s3_secret_access_key }}
+      args:
+        chdir: "{{ deploy_dir }}"
+      run_once: true
+      delegate_to: "{{ groups['nodes'][0] }}"
+      when: garage_key_info.rc != 0
+      register: new_garage_key
+
+    - name: Allow bucket access
+      become_user: "{{ app_user }}"
+      command: docker compose exec -T garage /garage bucket allow revolt-uploads --read --write --key revolt-app
+      args:
+        chdir: "{{ deploy_dir }}"
+      run_once: true
+      delegate_to: "{{ groups['nodes'][0] }}"
+      when: garage_key_info.rc != 0
+
+    - name: Wait for Caddy to acquire and store TLS certificate in KeyDB
+      become_user: "{{ app_user }}"
+      command: docker compose exec -T keydb keydb-cli --raw keys "*caddy*"
+      args:
+        chdir: "{{ deploy_dir }}"
+      register: keydb_keys
+      until: "'caddy' in keydb_keys.stdout"
+      retries: 30
+      delay: 5
+      run_once: true
+      delegate_to: "{{ groups['nodes'][0] }}"
+      ignore_errors: yes
+
+    - name: Start Caddy on secondary nodes
+      become_user: "{{ app_user }}"
+      command: docker compose up -d caddy
+      args:
+        chdir: "{{ deploy_dir }}"
+      when: inventory_hostname != groups['nodes'][0]

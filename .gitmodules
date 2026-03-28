@@ -1,0 +1,3 @@
+[submodule "stoatchat-0.11.1-ha-patch"]
+	path = stoatchat-0.11.1-ha-patch
+	url = https://github.com/m-matovic/stoatchat-0.11.1-ha-patch.git

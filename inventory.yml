@@ -1,0 +1,43 @@
+all:
+  children:
+    nodes:
+      hosts:
+        node1:
+          ansible_host: <PUBLIC_IP_ADDRESS>
+          private_ip: <PRIVATE_IP_ADDRESS>
+          private_interface: <PRIVATE_NETWORK_INTERFACE>
+          vrrp_priority: 100
+          server_id: <HETZNER_SERVER_ID>
+        node2:
+          ansible_host: <PUBLIC_IP_ADDRESS>
+          private_ip: <PRIVATE_IP_ADDRESS>
+          private_interface: <PRIVATE_NETWORK_INTERFACE>
+          vrrp_priority: 100
+          server_id: <HETZNER_SERVER_ID>
+        node3:
+          ansible_host: <PUBLIC_IP_ADDRESS>
+          private_ip: <PRIVATE_IP_ADDRESS>
+          private_interface: <PRIVATE_NETWORK_INTERFACE>
+          vrrp_priority: 100
+          server_id: <HETZNER_SERVER_ID>
+  vars:
+    ansible_user: root
+    app_user: stoat
+    stoat_domain: <YOUR_DOMAIN> # Your stoat domain, DNS should point it to the floating ip address
+    floating_ip_id: <FLOATING_IP_ID> # Get this using the Hetzner API https://docs.hetzner.cloud/reference/cloud#tag/floating-ips/list_floating_ips
+    floating_ip: <FLOATING_IP_ADDRESS>
+    public_interface: eth0
+    hetzner_api_token: <HETNZER_API_TOKEN> # Generate with read/write access
+
+    # Can be generated with ./generate_secrets:
+
+    rabbitmq_erlang_cookie: <RABBITMQ_ERLANG_COOKIE> # alphanumeric string
+    rabbitmq_user: <RABBITMQ_USER> # Any string
+    rabbitmq_password: <RABBITMQ_PASSWORD> # Any string
+    garage_rpc_secret: <GARAGE_RPC_SECRET> # 32 character hex string
+    s3_access_key_id: <S3_ACCESS_KEY_ID> # 20 character alphanumeric string
+    s3_secret_access_key: <S3_SECRET_ACCESS_KEY> # 40 character base64 string
+    livekit_api_key: <LIVEKIT_API_KEY> # alphanumeric string
+    livekit_api_secret: <LIVEKIT_API_KEY> # alphanumeric string
+    files_encryption_key: <FILES_ENCRYPTION_KEY> # 32 character base64 string
+    caddy_redis_encryption_key: <CADDY_REDIS_ENCRYPTION_KEY> # 32 character ASCII string

@@ -1,0 +1,47 @@
+---
+- name: Permanently Delete HA Stoat
+  hosts: nodes
+  become: yes
+  vars:
+    deploy_dir: /home/{{ app_user }}/ha-stoat
+
+  tasks:
+    - name: Check if deployment directory exists
+      stat:
+        path: "{{ deploy_dir }}/docker-compose.yml"
+      register: compose_file
+
+    - name: Stop Docker Compose and delete volumes and images
+      become_user: "{{ app_user }}"
+      command: docker compose down -v --rmi all --remove-orphans
+      args:
+        chdir: "{{ deploy_dir }}"
+      when: compose_file.stat.exists
+      ignore_errors: yes
+
+    - name: Ensure floating IP is removed from interface
+      command: ip addr del {{ floating_ip }}/32 dev {{ public_interface }}
+      ignore_errors: yes
+      changed_when: false
+
+    - name: Remove Pushd image tarball
+      file:
+        path: /tmp/ha-stoatchat-pushd.tar
+        state: absent
+
+    - name: Remove Keepalived state file
+      file:
+        path: /tmp/keepalived.state
+        state: absent
+
+    - name: Kill processes running under the application user
+      command: pkill -u {{ app_user }}
+      ignore_errors: yes
+      changed_when: false
+
+    - name: Delete application user
+      user:
+        name: "{{ app_user }}"
+        state: absent
+        remove: yes
+        force: yes

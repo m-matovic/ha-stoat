@@ -1,0 +1,68 @@
+{
+    storage redis {
+        address "{{ private_ip }}:6379"
+        encryption_key "{{ caddy_redis_encryption_key }}"
+    }
+}
+
+{{ stoat_domain }} {
+    route /api* {
+        uri strip_prefix /api
+        reverse_proxy {% for host in groups['nodes'] %}{{ hostvars[host]['private_ip'] }}:14702 {% endfor %} {
+            lb_policy least_conn
+            header_down Location "^/" "/api/"
+        }
+    }
+
+    route /ws {
+        uri strip_prefix /ws
+        reverse_proxy {% for host in groups['nodes'] %}{{ hostvars[host]['private_ip'] }}:14703 {% endfor %} {
+            lb_policy least_conn
+            header_down Location "^/" "/ws/"
+        }
+    }
+
+    route /autumn* {
+        uri strip_prefix /autumn
+        reverse_proxy {% for host in groups['nodes'] %}{{ hostvars[host]['private_ip'] }}:14704 {% endfor %} {
+            lb_policy least_conn
+            header_down Location "^/" "/autumn/"
+        }
+    }
+
+    route /january* {
+        uri strip_prefix /january
+        reverse_proxy {% for host in groups['nodes'] %}{{ hostvars[host]['private_ip'] }}:14705 {% endfor %} {
+            lb_policy least_conn
+            header_down Location "^/" "/january/"
+        }
+    }
+
+    route /gifbox* {
+        uri strip_prefix /gifbox
+        reverse_proxy {% for host in groups['nodes'] %}{{ hostvars[host]['private_ip'] }}:14706 {% endfor %} {
+            lb_policy least_conn
+            header_down Location "^/" "/gifbox/"
+        }
+    }
+
+    route /livekit* {
+        uri strip_prefix /livekit
+        reverse_proxy {% for host in groups['nodes'] %}{{ hostvars[host]['private_ip'] }}:7880 {% endfor %} {
+            lb_policy least_conn
+            header_down Location "^/" "/livekit/"
+        }
+    }
+
+    route /ingress* {
+        uri strip_prefix /ingress
+        reverse_proxy {% for host in groups['nodes'] %}{{ hostvars[host]['private_ip'] }}:8500 {% endfor %} {
+            lb_policy least_conn
+            header_down Location "^/" "/ingress/"
+        }
+    }
+
+    reverse_proxy {% for host in groups['nodes'] %}{{ hostvars[host]['private_ip'] }}:5000 {% endfor %} {
+        lb_policy least_conn
+    }
+}

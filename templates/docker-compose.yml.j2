@@ -1,0 +1,215 @@
+services:
+  keepalived:
+    build:
+      context: .
+      dockerfile: keepalived.Dockerfile
+    network_mode: host
+    cap_add:
+      - NET_RAW
+      - NET_ADMIN
+    env_file: .env
+    volumes:
+      - ./keepalived.conf:/etc/keepalived/keepalived.conf:ro
+    restart: always
+
+  caddy:
+    build:
+      context: .
+      dockerfile: caddy.Dockerfile
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+    restart: always
+
+  mongodb:
+    image: mongo:8
+    command: mongod --replSet rs0 --bind_ip_all
+    ports:
+      - "${PRIVATE_IP}:27017:27017"
+    volumes:
+      - mongo_data:/data/db
+    healthcheck:
+      test: echo 'db.runCommand("ping").ok' | mongosh localhost:27017/test --quiet
+      interval: 10s
+      timeout: 10s
+      retries: 5
+      start_period: 10s
+    restart: always
+
+  rabbitmq:
+    image: rabbitmq:4-alpine
+    hostname: "{{ inventory_hostname }}"
+    environment:
+      - RABBITMQ_ERLANG_COOKIE=${RABBITMQ_ERLANG_COOKIE}
+      - RABBITMQ_DEFAULT_USER=${RABBITMQ_USER}
+      - RABBITMQ_DEFAULT_PASS=${RABBITMQ_PASSWORD}
+    ports:
+      - "${PRIVATE_IP}:5672:5672"
+      - "${PRIVATE_IP}:4369:4369"
+      - "${PRIVATE_IP}:25672:25672"
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: rabbitmq-diagnostics -q ping
+      interval: 10s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    extra_hosts:
+      - "{{ inventory_hostname }}:127.0.0.1"
+{% for host in groups['nodes'] %}
+{% if host != inventory_hostname %}
+      - "{{ host }}:{{ hostvars[host]['private_ip'] }}"
+{% endif %}
+{% endfor %}
+    restart: always
+
+  keydb:
+    image: eqalpha/keydb:alpine
+    command: keydb-server /etc/keydb.conf
+    ports:
+      - "${PRIVATE_IP}:6379:6379"
+    volumes:
+      - ./keydb.conf:/etc/keydb.conf:ro
+      - keydb_data:/data
+    restart: always
+
+  garage:
+    image: dxflrs/garage:v2.2.0
+    ports:
+      - "${PRIVATE_IP}:3900:3900"
+      - "${PRIVATE_IP}:3901:3901"
+      - "${PRIVATE_IP}:3902:3902"
+    volumes:
+      - ./garage.toml:/etc/garage/garage.toml:ro
+      - garage_data:/var/lib/garage
+    environment:
+      - GARAGE_CONFIG_FILE=/etc/garage/garage.toml
+    restart: always
+
+  livekit:
+    image: ghcr.io/stoatchat/livekit-server:v1.9.12
+    depends_on:
+      keydb:
+        condition: service_started
+    command: --config /etc/livekit.yaml
+    network_mode: host
+    volumes:
+      - ./livekit.yaml:/etc/livekit.yaml:ro
+    restart: always
+
+  api:
+    image: ghcr.io/stoatchat/api:v0.11.1
+    ports:
+      - "{{ private_ip }}:14702:14702"
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      keydb:
+        condition: service_started
+      rabbitmq:
+        condition: service_healthy
+    volumes:
+      - ./Revolt.toml:/Revolt.toml:ro
+    restart: always
+
+  events:
+    image: ghcr.io/stoatchat/events:v0.11.1
+    ports:
+      - "{{ private_ip }}:14703:14703"
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      keydb:
+        condition: service_started
+    volumes:
+      - ./Revolt.toml:/Revolt.toml:ro
+    restart: always
+
+  autumn:
+    image: ghcr.io/stoatchat/file-server:v0.11.1
+    ports:
+      - "{{ private_ip }}:14704:14704"
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      garage:
+        condition: service_started
+    volumes:
+      - ./Revolt.toml:/Revolt.toml:ro
+    restart: always
+
+  january:
+    image: ghcr.io/stoatchat/proxy:v0.11.1
+    ports:
+      - "{{ private_ip }}:14705:14705"
+    volumes:
+      - ./Revolt.toml:/Revolt.toml:ro
+    restart: always
+
+  gifbox:
+    image: ghcr.io/stoatchat/gifbox:v0.11.1
+    ports:
+      - "{{ private_ip }}:14706:14706"
+    volumes:
+      - ./Revolt.toml:/Revolt.toml:ro
+    restart: always
+
+  crond:
+    image: ghcr.io/stoatchat/crond:v0.11.1
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      garage:
+        condition: service_started
+    volumes:
+      - ./Revolt.toml:/Revolt.toml:ro
+    restart: always
+
+  pushd:
+    image: ha-stoatchat/pushd:latest
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      keydb:
+        condition: service_started
+      rabbitmq:
+        condition: service_healthy
+    volumes:
+      - ./Revolt.toml:/Revolt.toml:ro
+    restart: always
+
+  voice-ingress:
+    image: ghcr.io/stoatchat/voice-ingress:v0.11.1
+    ports:
+      - "{{ private_ip }}:8500:8500"
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    volumes:
+      - ./Revolt.toml:/Revolt.toml:ro
+    restart: always
+
+  web:
+    image: ghcr.io/stoatchat/for-web:103d2bf
+    ports:
+      - "{{ private_ip }}:5000:5000"
+    restart: always
+    environment:
+      HOSTNAME: "https://{{ stoat_domain }}"
+      REVOLT_PUBLIC_URL: "https://{{ stoat_domain }}/api"
+      VITE_API_URL: "https://{{ stoat_domain }}/api"
+      VITE_WS_URL: "wss://{{ stoat_domain }}/ws"
+      VITE_MEDIA_URL: "https://{{ stoat_domain }}/autumn"
+      VITE_PROXY_URL: "https://{{ stoat_domain }}/january"
+      VITE_CFG_ENABLE_VIDEO: "true"
+
+volumes:
+  mongo_data:
+  rabbitmq_data:
+  keydb_data:
+  garage_data:

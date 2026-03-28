@@ -1,0 +1,27 @@
+---
+- name: Stop HA Stoat
+  hosts: nodes
+  become: yes
+  vars:
+    deploy_dir: /home/{{ app_user }}/ha-stoat
+
+  tasks:
+    - name: Check if deployment directory exists
+      stat:
+        path: "{{ deploy_dir }}/docker-compose.yml"
+      register: compose_file
+
+    - name: Run Docker Compose down as the application user
+      become_user: "{{ app_user }}"
+      command: docker compose down
+      args:
+        chdir: "{{ deploy_dir }}"
+      register: compose_output
+      changed_when: "'Removed' in compose_output.stderr or 'Stopped' in compose_output.stderr"
+      when: compose_file.stat.exists
+      ignore_errors: yes
+
+    - name: Ensure floating IP is removed from interface
+      command: ip addr del {{ floating_ip }}/32 dev {{ public_interface }}
+      ignore_errors: yes
+      changed_when: false

@@ -1,0 +1,11 @@
+bind 0.0.0.0
+port 6379
+protected-mode no
+active-replica yes
+multi-master yes
+
+{% for host in groups['nodes'] %}
+{% if host != inventory_hostname %}
+replicaof {{ hostvars[host]['private_ip'] }} 6379
+{% endif %}
+{% endfor %}
