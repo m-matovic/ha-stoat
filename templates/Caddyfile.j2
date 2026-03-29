@@ -11,6 +11,13 @@
         reverse_proxy {% for host in groups['nodes'] %}{{ hostvars[host]['private_ip'] }}:14702 {% endfor %} {
             lb_policy least_conn
             header_down Location "^/" "/api/"
+
+            health_uri /
+            health_interval 5s
+            health_timeout 1s
+
+            fail_duration 10s
+            lb_try_duration 5s
         }
     }
 
@@ -27,6 +34,13 @@
         reverse_proxy {% for host in groups['nodes'] %}{{ hostvars[host]['private_ip'] }}:14704 {% endfor %} {
             lb_policy least_conn
             header_down Location "^/" "/autumn/"
+
+            health_uri /
+            health_interval 5s
+            health_timeout 1s
+
+            fail_duration 10s
+            lb_try_duration 5s
         }
     }
 
@@ -35,6 +49,13 @@
         reverse_proxy {% for host in groups['nodes'] %}{{ hostvars[host]['private_ip'] }}:14705 {% endfor %} {
             lb_policy least_conn
             header_down Location "^/" "/january/"
+
+            health_uri /
+            health_interval 5s
+            health_timeout 1s
+
+            fail_duration 10s
+            lb_try_duration 5s
         }
     }
 
@@ -43,6 +64,13 @@
         reverse_proxy {% for host in groups['nodes'] %}{{ hostvars[host]['private_ip'] }}:14706 {% endfor %} {
             lb_policy least_conn
             header_down Location "^/" "/gifbox/"
+
+            health_uri /
+            health_interval 5s
+            health_timeout 1s
+
+            fail_duration 10s
+            lb_try_duration 5s
         }
     }
 
@@ -51,6 +79,13 @@
         reverse_proxy {% for host in groups['nodes'] %}{{ hostvars[host]['private_ip'] }}:7880 {% endfor %} {
             lb_policy least_conn
             header_down Location "^/" "/livekit/"
+
+            health_uri /
+            health_interval 5s
+            health_timeout 1s
+
+            fail_duration 10s
+            lb_try_duration 5s
         }
     }
 
